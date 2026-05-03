@@ -10,6 +10,7 @@ const { body, validationResult } = require('express-validator');
 const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
 const GeofenceConfig = require('../models/GeofenceConfig');
+const AuditLog = require('../models/AuditLog');
 const { generateOtp, sendOtpEmail } = require('../utils/mailer');
 const jwt = require('jsonwebtoken');
 
@@ -58,6 +59,15 @@ router.post(
 
       const emailDomain = email.split('@')[1];
       if (emailDomain !== config.allowedDomain) {
+        // Log the rejected registration attempt for admin visibility (TC-01/TC-13)
+        await AuditLog.create({
+          userId: null,
+          email: String(email),
+          androidId: String(androidId),
+          eventType: 'INVALID_DOMAIN',
+          ipAddress: req.ip,
+          metadata: { attemptedDomain: emailDomain, allowedDomain: config.allowedDomain }
+        }).catch(() => {}); // best-effort – don't block the response
         return res.status(403).json({
           success: false,
           message: `Registration is restricted to @${config.allowedDomain} email addresses.`
@@ -122,10 +132,26 @@ router.post(
 
       // Compare OTP as strings to prevent type coercion attacks
       if (typeof otp !== 'string' || user.otp !== otp) {
+        await AuditLog.create({
+          userId: user._id,
+          email: user.email,
+          androidId: String(androidId),
+          eventType: 'OTP_FAILED',
+          ipAddress: req.ip,
+          metadata: { reason: 'wrong_otp' }
+        }).catch(() => {});
         return res.status(400).json({ success: false, message: 'Invalid OTP.' });
       }
 
       if (!user.otpExpiresAt || user.otpExpiresAt < new Date()) {
+        await AuditLog.create({
+          userId: user._id,
+          email: user.email,
+          androidId: String(androidId),
+          eventType: 'OTP_FAILED',
+          ipAddress: req.ip,
+          metadata: { reason: 'otp_expired' }
+        }).catch(() => {});
         return res.status(400).json({ success: false, message: 'OTP has expired.' });
       }
 
@@ -190,6 +216,14 @@ router.post(
 
       // Enforce device binding
       if (user.androidId && user.androidId !== androidId) {
+        await AuditLog.create({
+          userId: user._id,
+          email: user.email,
+          androidId: String(androidId),
+          eventType: 'UNAUTHORIZED_DEVICE',
+          ipAddress: req.ip,
+          metadata: { boundDevice: user.androidId }
+        }).catch(() => {});
         return res.status(403).json({
           success: false,
           message: 'Unrecognised device. Contact admin to reset your device binding.'

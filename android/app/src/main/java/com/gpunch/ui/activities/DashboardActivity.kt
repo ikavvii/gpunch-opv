@@ -2,17 +2,21 @@ package com.gpunch.ui.activities
 
 import android.Manifest
 import android.content.Intent
+import android.content.IntentSender
 import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.widget.Toast
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
+import com.google.android.gms.common.api.ResolvableApiException
 import com.google.android.gms.location.*
 import com.google.android.gms.tasks.CancellationTokenSource
 import com.gpunch.api.GpunchApiService
@@ -44,8 +48,22 @@ class DashboardActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
             val granted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
                     result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-            if (granted) refreshLocation()
+            if (granted) checkLocationSettingsThenRefresh()
             else Toast.makeText(this, getString(com.gpunch.R.string.error_permission_location), Toast.LENGTH_LONG).show()
+        }
+
+    // TC-05: launcher for the system location-settings resolution dialog
+    private val locationSettingsLauncher =
+        registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+            if (result.resultCode == RESULT_OK) {
+                refreshLocation()
+            } else {
+                Toast.makeText(
+                    this,
+                    getString(com.gpunch.R.string.error_location_unavailable),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -94,7 +112,7 @@ class DashboardActivity : AppCompatActivity() {
         binding.btnClockIn.setOnClickListener { onClockInClicked() }
         binding.btnClockOut.setOnClickListener { onClockOutClicked() }
         binding.btnLogout.setOnClickListener { logout() }
-        binding.btnRefreshLocation.setOnClickListener { refreshLocation() }
+        binding.btnRefreshLocation.setOnClickListener { checkLocationSettingsThenRefresh() }
     }
 
     private fun onClockInClicked() {
@@ -198,12 +216,57 @@ class DashboardActivity : AppCompatActivity() {
         val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
         val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
         if (fine == PackageManager.PERMISSION_GRANTED || coarse == PackageManager.PERMISSION_GRANTED) {
-            refreshLocation()
+            checkLocationSettingsThenRefresh()
         } else {
             locationPermissionLauncher.launch(
                 arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
             )
         }
+    }
+
+    /**
+     * TC-05: Verifies that high-accuracy location is enabled before fetching location.
+     * If the device has GPS turned off, the system settings dialog is shown so the
+     * user can enable it without leaving the app.
+     */
+    private fun checkLocationSettingsThenRefresh() {
+        val locationRequest = LocationRequest.Builder(
+            Priority.PRIORITY_HIGH_ACCURACY, 10_000L
+        ).build()
+
+        val settingsRequest = LocationSettingsRequest.Builder()
+            .addLocationRequest(locationRequest)
+            .build()
+
+        LocationServices.getSettingsClient(this)
+            .checkLocationSettings(settingsRequest)
+            .addOnSuccessListener {
+                // Location settings satisfied – fetch location
+                refreshLocation()
+            }
+            .addOnFailureListener { exception ->
+                if (exception is ResolvableApiException) {
+                    // TC-05: GPS is off – show the system dialog to enable high-accuracy location
+                    try {
+                        locationSettingsLauncher.launch(
+                            IntentSenderRequest.Builder(exception.resolution).build()
+                        )
+                    } catch (e: IntentSender.SendIntentException) {
+                        Log.e("DashboardActivity", "Could not launch location settings dialog", e)
+                        Toast.makeText(
+                            this,
+                            getString(com.gpunch.R.string.error_location_unavailable),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                } else {
+                    Toast.makeText(
+                        this,
+                        getString(com.gpunch.R.string.error_location_unavailable),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
     }
 
     private fun refreshLocation() {

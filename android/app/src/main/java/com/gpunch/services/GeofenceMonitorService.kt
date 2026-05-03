@@ -7,8 +7,14 @@ import android.content.Context
 import android.content.Intent
 import android.location.Location
 import android.os.Looper
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
+import androidx.work.Constraints
+import androidx.work.Data
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import com.google.android.gms.location.*
 import com.gpunch.GPunchApp
 import com.gpunch.R
@@ -19,7 +25,9 @@ import com.gpunch.models.PunchRequest
 import com.gpunch.ui.activities.DashboardActivity
 import com.gpunch.utils.GeofenceUtils
 import com.gpunch.utils.SessionManager
+import com.gpunch.workers.PendingClockOutWorker
 import kotlinx.coroutines.*
+import java.io.IOException
 
 /**
  * Foreground Service that continuously monitors the user's GPS position while
@@ -189,14 +197,49 @@ class GeofenceMonitorService : LifecycleService() {
                     sessionManager.setIsClockedIn(false)
                     showAutoClockOutNotification()
                 }
-            } catch (_: Exception) {
-                // Cache locally for later sync if network is unavailable
-                sessionManager.setIsClockedIn(false) // optimistic update
+            } catch (e: IOException) {
+                // TC-14: Network unavailable (Airplane Mode etc.) – enqueue WorkManager job
+                // that will retry automatically once connectivity is restored.
+                Log.w("GeofenceService", "Auto clock-out failed (network unavailable); queuing for retry", e)
+                enqueuePendingClockOut(location.latitude, location.longitude, androidId)
+                // Optimistic local update so the UI reflects clocked-out state
+                sessionManager.setIsClockedIn(false)
+                showAutoClockOutNotification()
+            } catch (e: Exception) {
+                // Unexpected error – log and still queue the clock-out so attendance is not lost
+                Log.e("GeofenceService", "Unexpected error during auto clock-out; queuing for retry", e)
+                enqueuePendingClockOut(location.latitude, location.longitude, androidId)
+                sessionManager.setIsClockedIn(false)
                 showAutoClockOutNotification()
             } finally {
                 stopSelf()
             }
         }
+    }
+
+    /**
+     * Schedules a [PendingClockOutWorker] with a CONNECTED network constraint.
+     * WorkManager will fire it as soon as the device regains internet access.
+     */
+    private fun enqueuePendingClockOut(lat: Double, lng: Double, androidId: String) {
+        val inputData = Data.Builder()
+            .putDouble(PendingClockOutWorker.KEY_LATITUDE, lat)
+            .putDouble(PendingClockOutWorker.KEY_LONGITUDE, lng)
+            .putString(PendingClockOutWorker.KEY_ANDROID_ID, androidId)
+            .build()
+
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val workRequest = OneTimeWorkRequestBuilder<PendingClockOutWorker>()
+            .setInputData(inputData)
+            .setConstraints(constraints)
+            .addTag(PendingClockOutWorker.WORK_TAG)
+            .build()
+
+        WorkManager.getInstance(applicationContext)
+            .enqueue(workRequest)
     }
 
     private fun reportAudit(eventType: String, location: Location) {
