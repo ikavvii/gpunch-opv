@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GPunch</string>
+    <string name="notification_channel_name">GPunch Location Service</string>
+    <string name="notification_channel_desc">Monitors your location for automatic clock-out when you leave the work zone</string>
+    <string name="notification_title">GPunch is active</string>
+    <string name="notification_text">Location monitoring active – tap to open the app</string>
+
+    <!-- Auth -->
+    <string name="label_email">Institutional Email</string>
+    <string name="label_name">Full Name</string>
+    <string name="label_otp">One-Time Password</string>
+    <string name="hint_email">yourname@institution.ac.in</string>
+    <string name="hint_otp">6-digit code</string>
+    <string name="btn_register">Create Account</string>
+    <string name="btn_login">Login</string>
+    <string name="btn_verify">Verify OTP</string>
+    <string name="btn_resend_otp">Resend OTP</string>
+    <string name="link_already_have_account">Already have an account? Login</string>
+    <string name="link_create_account">Don\'t have an account? Register</string>
+
+    <!-- Dashboard -->
+    <string name="btn_clock_in">Clock In</string>
+    <string name="btn_clock_out">Clock Out</string>
+    <string name="status_clocked_in">● Clocked In</string>
+    <string name="status_clocked_out">● Clocked Out</string>
+    <string name="label_location">Current Location</string>
+    <string name="label_duration">Duration</string>
+    <string name="btn_logout">Logout</string>
+    <string name="btn_view_history">View History</string>
+
+    <!-- Errors -->
+    <string name="error_location_unavailable">Unable to get current location. Please enable GPS.</string>
+    <string name="error_mock_location">Mock/fake location detected. Please disable GPS spoofing apps.</string>
+    <string name="error_network">Network error. Please check your connection.</string>
+    <string name="error_outside_zone">You are outside the allowed work zone.</string>
+    <string name="error_permission_location">Location permission is required for this app to function.</string>
+</resources>
