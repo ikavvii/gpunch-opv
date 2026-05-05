@@ -15,7 +15,7 @@ sealed class AdminUiEvent {
 
 class AdminViewModel : ViewModel() {
 
-    private val api = RetrofitClient.instance
+    private val api = RetrofitClient.getInstance().create(com.gpunch.api.GpunchApiService::class.java)
 
     // ─── Geofence ─────────────────────────────────────────────────────────────
 
