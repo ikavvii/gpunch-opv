@@ -63,6 +63,11 @@
             android:name=".ui.activities.DashboardActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".ui.activities.AdminActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.activities.DashboardActivity" />
+
         <!-- Foreground Service for auto clock-out geofence monitoring -->
         <service
             android:name=".services.GeofenceMonitorService"

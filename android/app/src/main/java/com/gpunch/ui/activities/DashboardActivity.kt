@@ -113,6 +113,14 @@ class DashboardActivity : AppCompatActivity() {
         binding.btnClockOut.setOnClickListener { onClockOutClicked() }
         binding.btnLogout.setOnClickListener { logout() }
         binding.btnRefreshLocation.setOnClickListener { checkLocationSettingsThenRefresh() }
+
+        // Show Admin Panel card only for admin/faculty role
+        if (sessionManager.getUserRole() == "admin") {
+            binding.cardAdminPanel.visibility = View.VISIBLE
+            binding.btnAdminPanel.setOnClickListener {
+                startActivity(Intent(this, AdminActivity::class.java))
+            }
+        }
     }
 
     private fun onClockInClicked() {

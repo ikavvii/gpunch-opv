@@ -96,3 +96,47 @@ data class AuditLogResponse(
     @SerializedName("success") val success: Boolean,
     @SerializedName("logId") val logId: String?
 )
+
+// ─── Admin Request / Response DTOs ───────────────────────────────────────────
+
+data class UpdateGeofenceRequest(
+    @SerializedName("latitude") val latitude: Double,
+    @SerializedName("longitude") val longitude: Double,
+    @SerializedName("allowedRadius") val allowedRadius: Int,
+    @SerializedName("allowedDomain") val allowedDomain: String
+)
+
+data class UserItemDto(
+    @SerializedName("_id") val id: String,
+    @SerializedName("name") val name: String,
+    @SerializedName("email") val email: String,
+    @SerializedName("role") val role: String,
+    @SerializedName("isVerified") val isVerified: Boolean,
+    @SerializedName("isActive") val isActive: Boolean,
+    @SerializedName("androidId") val androidId: String?
+)
+
+data class UsersResponse(
+    @SerializedName("success") val success: Boolean,
+    @SerializedName("page") val page: Int,
+    @SerializedName("total") val total: Int,
+    @SerializedName("users") val users: List<UserItemDto>
+)
+
+data class AuditLogItemDto(
+    @SerializedName("_id") val id: String,
+    @SerializedName("eventType") val eventType: String,
+    @SerializedName("userId") val userId: String?,
+    @SerializedName("androidId") val androidId: String?,
+    @SerializedName("latitude") val latitude: Double?,
+    @SerializedName("longitude") val longitude: Double?,
+    @SerializedName("metadata") val metadata: Map<String, Any>?,
+    @SerializedName("createdAt") val createdAt: String
+)
+
+data class AuditLogsResponse(
+    @SerializedName("success") val success: Boolean,
+    @SerializedName("page") val page: Int,
+    @SerializedName("total") val total: Int,
+    @SerializedName("logs") val logs: List<AuditLogItemDto>
+)

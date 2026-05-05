@@ -42,6 +42,27 @@ interface GpunchApiService {
     @GET("api/admin/geofence")
     suspend fun getGeofenceConfig(): Response<GeofenceConfigResponse>
 
+    @POST("api/admin/geofence")
+    suspend fun updateGeofenceConfig(@Body request: UpdateGeofenceRequest): Response<GeofenceConfigResponse>
+
+    @GET("api/admin/users")
+    suspend fun getUsers(
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 20
+    ): Response<UsersResponse>
+
+    @POST("api/admin/reset-device/{userId}")
+    suspend fun resetDevice(@Path("userId") userId: String): Response<GenericResponse>
+
+    @GET("api/admin/audit-logs")
+    suspend fun getAuditLogs(
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 20,
+        @Query("eventType") eventType: String? = null
+    ): Response<AuditLogsResponse>
+
+    // Note: export-csv returns a raw CSV file; handled via OkHttp directly in the ViewModel.
+
     // ─── Audit ────────────────────────────────────────────────────────────────
 
     @POST("api/audit")
