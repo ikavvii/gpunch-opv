@@ -107,7 +107,8 @@ router.post(
           id: record._id,
           clockInTime: record.clockInTime,
           distance: Math.round(distance)
-        }
+        },
+        allowedRadius: config.allowedRadius  // Tell client exactly what radius was used
       });
     } catch (err) {
       console.error('[PUNCH-IN]', err);

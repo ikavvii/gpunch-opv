@@ -6,6 +6,8 @@
  * POST  /api/admin/reset-device/:id  – clear androidId for a user
  * GET   /api/admin/users             – list all users
  * GET   /api/admin/audit-logs        – paginated audit logs
+ * GET   /api/admin/attendance        – attendance report with date filters
+ * GET   /api/admin/attendance/summary – today/yesterday summary
  * GET   /api/admin/export-csv        – download CSV report
  * POST  /api/admin/seed              – seed first admin (only if no admin exists)
  */
@@ -117,7 +119,7 @@ router.get('/geofence', async (_req, res) => {
   }
 });
 
-// ─── POST /api/admin/reset-device/:userId ─────────────────────────────────────
+// ─── POST /api/admin/reset-device/:userId ─────────────────────────────
 router.post('/reset-device/:userId', async (req, res) => {
   // Validate ObjectId to prevent NoSQL injection through URL param
   if (!mongoose.Types.ObjectId.isValid(req.params.userId)) {
@@ -142,7 +144,7 @@ router.post('/reset-device/:userId', async (req, res) => {
   }
 });
 
-// ─── GET /api/admin/users ─────────────────────────────────────────────────────
+// ─── GET /api/admin/users ─────────────────────────────────────────────
 router.get('/users', async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
@@ -159,7 +161,7 @@ router.get('/users', async (req, res) => {
   }
 });
 
-// ─── GET /api/admin/audit-logs ────────────────────────────────────────────────
+// ─── GET /api/admin/audit-logs ────────────────────────────────────────────
 router.get('/audit-logs', async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
@@ -185,10 +187,110 @@ router.get('/audit-logs', async (req, res) => {
   }
 });
 
-// ─── GET /api/admin/export-csv ────────────────────────────────────────────────
+// ─── GET /api/admin/attendance ───────────────────────────────────────────
+router.get('/attendance', async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, parseInt(req.query.limit || '20', 10));
+    const skip = (page - 1) * limit;
+
+    // Date filters
+    const filter = {};
+    if (req.query.date) {
+      const date = new Date(req.query.date);
+      const nextDay = new Date(date);
+      nextDay.setDate(date.getDate() + 1);
+      filter.clockInTime = { $gte: date, $lt: nextDay };
+    } else if (req.query.startDate && req.query.endDate) {
+      filter.clockInTime = {
+        $gte: new Date(req.query.startDate),
+        $lte: new Date(req.query.endDate)
+      };
+    }
+
+    // Filter by user email or name
+    if (req.query.search) {
+      const searchRegex = new RegExp(req.query.search, 'i');
+      const users = await User.find({
+        $or: [{ name: searchRegex }, { email: searchRegex }]
+      }).select('_id').lean();
+      filter.userId = { $in: users.map(u => u._id) };
+    }
+
+    const [records, total] = await Promise.all([
+      AttendanceRecord.find(filter)
+        .populate('userId', 'name email')
+        .sort({ clockInTime: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      AttendanceRecord.countDocuments(filter)
+    ]);
+
+    return res.json({ success: true, page, total, records });
+  } catch (err) {
+    console.error('[ADMIN ATTENDANCE]', err);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// ─── GET /api/admin/attendance/summary ──────────────────────────────────
+router.get('/attendance/summary', async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const [todayRecords, yesterdayRecords, totalUsers] = await Promise.all([
+      AttendanceRecord.find({
+        clockInTime: { $gte: today, $lt: tomorrow }
+      }).populate('userId', 'name email').lean(),
+      AttendanceRecord.find({
+        clockInTime: { $gte: yesterday, $lt: today }
+      }).populate('userId', 'name email').lean(),
+      User.countDocuments({ isActive: true })
+    ]);
+
+    return res.json({
+      success: true,
+      today: {
+        count: todayRecords.length,
+        records: todayRecords
+      },
+      yesterday: {
+        count: yesterdayRecords.length,
+        records: yesterdayRecords
+      },
+      totalActiveUsers: totalUsers
+    });
+  } catch (err) {
+    console.error('[ADMIN SUMMARY]', err);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// ─── GET /api/admin/export-csv ────────────────────────────────────────
 router.get('/export-csv', async (req, res) => {
   try {
-    const records = await AttendanceRecord.find()
+    // Date filters
+    const filter = {};
+    if (req.query.date) {
+      const date = new Date(req.query.date);
+      const nextDay = new Date(date);
+      nextDay.setDate(date.getDate() + 1);
+      filter.clockInTime = { $gte: date, $lt: nextDay };
+    } else if (req.query.startDate && req.query.endDate) {
+      filter.clockInTime = {
+        $gte: new Date(req.query.startDate),
+        $lte: new Date(req.query.endDate)
+      };
+    }
+
+    const records = await AttendanceRecord.find(filter)
       .populate('userId', 'name email')
       .sort({ clockInTime: -1 })
       .lean();
