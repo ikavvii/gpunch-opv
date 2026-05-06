@@ -37,8 +37,8 @@ object RetrofitClient {
             }
 
             val client = OkHttpClient.Builder()
-                .addInterceptor(loggingInterceptor)
                 .addInterceptor(authInterceptor)
+                .addInterceptor(loggingInterceptor)  // after auth so JWT is visible in debug logs
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)

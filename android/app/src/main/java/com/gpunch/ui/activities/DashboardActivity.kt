@@ -156,12 +156,15 @@ class DashboardActivity : AppCompatActivity() {
             }
             is PunchState.ClockedIn -> {
                 binding.progressBar.visibility = View.GONE
+                // Persist clock-in state so duration timer works and state survives app restarts
+                sessionManager.setIsClockedIn(true, System.currentTimeMillis(), state.record.id)
                 Toast.makeText(this, "Clocked in! (${state.distance}m from zone)", Toast.LENGTH_SHORT).show()
                 startGeofenceService()
                 viewModel.resetState()
             }
             is PunchState.ClockedOut -> {
                 binding.progressBar.visibility = View.GONE
+                sessionManager.setIsClockedIn(false)
                 val dur = state.durationMinutes
                 val msg = if (dur != null) "Clocked out. Duration: ${formatMinutes(dur)}" else "Clocked out."
                 Toast.makeText(this, msg, Toast.LENGTH_LONG).show()

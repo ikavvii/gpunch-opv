@@ -67,7 +67,10 @@ class DashboardViewModel(private val apiService: GpunchApiService) : ViewModel()
                     }
                     response.isSuccessful && body?.success == true && body.record != null -> {
                         _isClockedIn.postValue(true)
-                        _punchState.postValue(PunchState.ClockedIn(body.record, body.distance ?: 0))
+                        // distance is nested inside record for 201 responses; top-level body.distance
+                        // is only populated on 403 out-of-bounds responses.
+                        val dist = body.record.distance ?: body.distance ?: 0
+                        _punchState.postValue(PunchState.ClockedIn(body.record, dist))
                     }
                     else -> {
                         val msg = body?.message ?: "Clock-in failed (${response.code()})"
