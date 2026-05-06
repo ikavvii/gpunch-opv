@@ -156,8 +156,18 @@ class DashboardActivity : AppCompatActivity() {
             }
             is PunchState.ClockedIn -> {
                 binding.progressBar.visibility = View.GONE
-                // Persist clock-in state so duration timer works and state survives app restarts
-                sessionManager.setIsClockedIn(true, System.currentTimeMillis(), state.record.id)
+                // Use the server's clock-in timestamp so the duration timer is accurate.
+                // Fall back to device time if parsing fails.
+                val clockInMillis = try {
+                    state.record.clockInTime?.let { ts ->
+                        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
+                        fmt.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                        fmt.parse(ts)?.time
+                    } ?: System.currentTimeMillis()
+                } catch (_: Exception) {
+                    System.currentTimeMillis()
+                }
+                sessionManager.setIsClockedIn(true, clockInMillis, state.record.id)
                 Toast.makeText(this, "Clocked in! (${state.distance}m from zone)", Toast.LENGTH_SHORT).show()
                 startGeofenceService()
                 viewModel.resetState()
