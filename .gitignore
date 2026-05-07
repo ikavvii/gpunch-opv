@@ -1,0 +1,6 @@
+# GPunch
+
+*.DS_Store
+.idea/
+*.iml
+*.log
