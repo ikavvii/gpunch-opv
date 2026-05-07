@@ -2,11 +2,15 @@ package com.gpunch.api
 
 import com.gpunch.BuildConfig
 import com.gpunch.utils.SessionManager
+import okhttp3.Dns
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import okhttp3.dnsoverhttps.DnsOverHttps
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import java.net.InetAddress
 import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
@@ -38,6 +42,7 @@ object RetrofitClient {
             }
 
             val client = OkHttpClient.Builder()
+                .dns(codespacesSafeDns())
                 .addInterceptor(authInterceptor)
                 .addInterceptor(loggingInterceptor)
                 .connectTimeout(30, TimeUnit.SECONDS)
@@ -63,4 +68,27 @@ object RetrofitClient {
 
     private fun normalizedBaseUrl(url: String): String =
         if (url.endsWith("/")) url else "$url/"
+
+    private fun codespacesSafeDns(): Dns {
+        val cloudflareDns = DnsOverHttps.Builder()
+            .client(OkHttpClient.Builder().build())
+            .url("https://cloudflare-dns.com/dns-query".toHttpUrl())
+            .bootstrapDnsHosts(
+                InetAddress.getByName("1.1.1.1"),
+                InetAddress.getByName("1.0.0.1"),
+                InetAddress.getByName("2606:4700:4700::1111"),
+                InetAddress.getByName("2606:4700:4700::1001")
+            )
+            .build()
+
+        return object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> {
+                return try {
+                    cloudflareDns.lookup(hostname)
+                } catch (_: Exception) {
+                    Dns.SYSTEM.lookup(hostname)
+                }
+            }
+        }
+    }
 }
