@@ -39,6 +39,7 @@ jobs:
 
       - name: Build installable debug APK
         run: |
+          sed -i 's/\r$//' ./gradlew
           chmod +x ./gradlew
           ./gradlew :app:assembleDebug -PBASE_URL="${BACKEND_URL}"
 
