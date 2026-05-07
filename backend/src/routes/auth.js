@@ -32,6 +32,12 @@ function signToken(userId) {
   });
 }
 
+function configuredDomains(config) {
+  const domains = Array.isArray(config.allowedDomains) ? config.allowedDomains : [];
+  const all = domains.length ? domains : [config.allowedDomain];
+  return all.map(domain => String(domain).trim().replace(/^@/, '').toLowerCase()).filter(Boolean);
+}
+
 // ─── POST /api/auth/register ──────────────────────────────────────────────────
 router.post(
   '/register',
@@ -57,8 +63,9 @@ router.post(
         });
       }
 
-      const emailDomain = email.split('@')[1];
-      if (emailDomain !== config.allowedDomain) {
+      const emailDomain = email.split('@')[1]?.toLowerCase();
+      const allowedDomains = configuredDomains(config);
+      if (!allowedDomains.includes(emailDomain)) {
         // Log the rejected registration attempt for admin visibility (TC-01/TC-13)
         await AuditLog.create({
           userId: null,
@@ -66,11 +73,11 @@ router.post(
           androidId: String(androidId),
           eventType: 'INVALID_DOMAIN',
           ipAddress: req.ip,
-          metadata: { attemptedDomain: emailDomain, allowedDomain: config.allowedDomain }
+          metadata: { attemptedDomain: emailDomain, allowedDomains }
         }).catch(() => {}); // best-effort – don't block the response
         return res.status(403).json({
           success: false,
-          message: `Registration is restricted to @${config.allowedDomain} email addresses.`
+          message: `Registration is restricted to: ${allowedDomains.map(d => `@${d}`).join(', ')}.`
         });
       }
 
@@ -157,6 +164,14 @@ router.post(
 
       // Device binding: if already bound, enforce it
       if (user.androidId && user.androidId !== androidId) {
+        await AuditLog.create({
+          userId: user._id,
+          email: user.email,
+          androidId: String(androidId),
+          eventType: 'UNAUTHORIZED_DEVICE',
+          ipAddress: req.ip,
+          metadata: { boundDevice: user.androidId, phase: 'verify_otp' }
+        }).catch(() => {});
         return res.status(403).json({
           success: false,
           message: 'Device mismatch. Contact admin to reset your device binding.'

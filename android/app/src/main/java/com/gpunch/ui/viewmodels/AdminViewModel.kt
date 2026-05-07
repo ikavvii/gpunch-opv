@@ -1,28 +1,38 @@
 package com.gpunch.ui.viewmodels
 
+import android.app.Application
+import android.os.Environment
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.gpunch.api.RetrofitClient
 import com.gpunch.models.*
+import com.gpunch.utils.SessionManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 sealed class AdminUiEvent {
     data class Success(val message: String) : AdminUiEvent()
     data class Error(val message: String) : AdminUiEvent()
 }
 
-class AdminViewModel : ViewModel() {
+class AdminViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val api = RetrofitClient.getInstance().create(com.gpunch.api.GpunchApiService::class.java)
+    private val api = RetrofitClient.getInstance(SessionManager(application))
+        .create(com.gpunch.api.GpunchApiService::class.java)
 
-    // ─── Geofence ─────────────────────────────────────────────────────────────
+    // ─── Geofence ─────────────────────────────────────────────────────
 
     private val _geofenceConfig = MutableLiveData<GeofenceConfigDto?>()
     val geofenceConfig: LiveData<GeofenceConfigDto?> = _geofenceConfig
 
-    // ─── Users ────────────────────────────────────────────────────────────────
+    // ─── Users ────────────────────────────────────────────────────────
 
     private val _users = MutableLiveData<List<UserItemDto>>()
     val users: LiveData<List<UserItemDto>> = _users
@@ -30,7 +40,7 @@ class AdminViewModel : ViewModel() {
     private val _usersTotal = MutableLiveData<Int>()
     val usersTotal: LiveData<Int> = _usersTotal
 
-    // ─── Audit Logs ───────────────────────────────────────────────────────────
+    // ─── Audit Logs ───────────────────────────────────────────────────
 
     private val _auditLogs = MutableLiveData<List<AuditLogItemDto>>()
     val auditLogs: LiveData<List<AuditLogItemDto>> = _auditLogs
@@ -38,7 +48,24 @@ class AdminViewModel : ViewModel() {
     private val _auditTotal = MutableLiveData<Int>()
     val auditTotal: LiveData<Int> = _auditTotal
 
-    // ─── Loading / Event ──────────────────────────────────────────────────────
+    // ─── Attendance Report ───────────────────────────────────────────
+
+    private val _attendanceRecords = MutableLiveData<List<AttendanceItemDto>>()
+    val attendanceRecords: LiveData<List<AttendanceItemDto>> = _attendanceRecords
+
+    private val _attendanceTotal = MutableLiveData<Int>()
+    val attendanceTotal: LiveData<Int> = _attendanceTotal
+
+    private val _attendanceSummary = MutableLiveData<AttendanceSummaryResponse?>()
+    val attendanceSummary: LiveData<AttendanceSummaryResponse?> = _attendanceSummary
+
+    private val _attendanceAbsentees = MutableLiveData<List<UserItemDto>>(emptyList())
+    val attendanceAbsentees: LiveData<List<UserItemDto>> = _attendanceAbsentees
+
+    private val _attendanceAbsenteesTotal = MutableLiveData(0)
+    val attendanceAbsenteesTotal: LiveData<Int> = _attendanceAbsenteesTotal
+
+    // ─── Loading / Event ──────────────────────────────────────────────
 
     private val _isLoading = MutableLiveData(false)
     val isLoading: LiveData<Boolean> = _isLoading
@@ -66,12 +93,16 @@ class AdminViewModel : ViewModel() {
         }
     }
 
-    fun updateGeofenceConfig(lat: Double, lng: Double, radius: Int, domain: String) {
+    fun updateGeofenceConfig(lat: Double, lng: Double, radius: Int, domainsText: String, isActive: Boolean) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
+                val domains = domainsText.split(',')
+                    .map { it.trim().removePrefix("@").lowercase(Locale.US) }
+                    .filter { it.isNotEmpty() }
+                    .distinct()
                 val resp = api.updateGeofenceConfig(
-                    UpdateGeofenceRequest(lat, lng, radius, domain)
+                    UpdateGeofenceRequest(lat, lng, radius, domains.firstOrNull().orEmpty(), domains, isActive)
                 )
                 if (resp.isSuccessful && resp.body()?.success == true) {
                     _geofenceConfig.value = resp.body()?.config
@@ -150,6 +181,109 @@ class AdminViewModel : ViewModel() {
                 _event.value = AdminUiEvent.Error(e.message ?: "Network error")
             } finally {
                 _isLoading.value = false
+            }
+        }
+    }
+
+    // ─── Attendance Report operations ──────────────────────────────
+
+    fun loadAttendanceReport(
+        page: Int = 1,
+        date: String? = null,
+        startDate: String? = null,
+        endDate: String? = null,
+        search: String? = null
+    ) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val resp = api.getAttendanceReport(
+                    page = page,
+                    date = date,
+                    startDate = startDate,
+                    endDate = endDate,
+                    search = search
+                )
+                if (resp.isSuccessful) {
+                    val body = resp.body()
+                    _attendanceRecords.value = body?.records ?: emptyList()
+                    _attendanceTotal.value = body?.total ?: 0
+                } else {
+                    _event.value = AdminUiEvent.Error("Failed to load attendance report")
+                }
+            } catch (e: Exception) {
+                _event.value = AdminUiEvent.Error(e.message ?: "Network error")
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    fun loadAttendanceSummary() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val resp = api.getAttendanceSummary()
+                if (resp.isSuccessful) {
+                    _attendanceSummary.value = resp.body()
+                } else {
+                    _event.value = AdminUiEvent.Error("Failed to load attendance summary")
+                }
+            } catch (e: Exception) {
+                _event.value = AdminUiEvent.Error(e.message ?: "Network error")
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    fun loadAttendanceAbsentees(date: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val resp = api.getAttendanceAbsentees(date)
+                if (resp.isSuccessful) {
+                    val body = resp.body()
+                    _attendanceAbsentees.value = body?.users ?: emptyList()
+                    _attendanceAbsenteesTotal.value = body?.total ?: 0
+                } else {
+                    _event.value = AdminUiEvent.Error("Failed to load absentees")
+                }
+            } catch (e: Exception) {
+                _event.value = AdminUiEvent.Error(e.message ?: "Network error")
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    fun exportCsv(
+        date: String? = null,
+        startDate: String? = null,
+        endDate: String? = null,
+        callback: (Boolean, String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val response = api.exportCsv(date = date, startDate = startDate, endDate = endDate)
+                val body = response.body()
+                if (response.isSuccessful && body != null) {
+                    val path = withContext(Dispatchers.IO) {
+                        val dir = getApplication<Application>()
+                            .getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                            ?: getApplication<Application>().cacheDir
+                        if (!dir.exists()) dir.mkdirs()
+                        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+                        val file = File(dir, "gpunch-attendance-$stamp.csv")
+                        file.outputStream().use { out -> body.byteStream().copyTo(out) }
+                        file.absolutePath
+                    }
+                    callback(true, "CSV exported to $path")
+                } else {
+                    callback(false, "Export failed (${response.code()})")
+                }
+            } catch (e: Exception) {
+                callback(false, e.message ?: "Export error")
             }
         }
     }

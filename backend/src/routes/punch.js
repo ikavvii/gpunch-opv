@@ -53,12 +53,12 @@ router.post(
         return res.status(503).json({ success: false, message: 'Geofence not configured.' });
       }
 
-      const distance = haversineDistance(
-        config.latitude, config.longitude,
-        latitude, longitude
-      );
+      const geofenceActive = config.isActive !== false;
+      const distance = geofenceActive
+        ? haversineDistance(config.latitude, config.longitude, latitude, longitude)
+        : 0;
 
-      if (distance > config.allowedRadius) {
+      if (geofenceActive && distance > config.allowedRadius) {
         await AuditLog.create({
           userId: user._id,
           email: user.email,
@@ -86,7 +86,7 @@ router.post(
       if (existing) {
         return res.status(409).json({
           success: false,
-          message: 'Already clocked in. Please clock out first.',
+          message: 'Already punched in. Please punch out first.',
           recordId: existing._id
         });
       }
@@ -102,13 +102,19 @@ router.post(
 
       return res.status(201).json({
         success: true,
-        message: 'Clocked in successfully.',
+        message: 'Punched in successfully.',
         record: {
           id: record._id,
           clockInTime: record.clockInTime,
           distance: Math.round(distance)
         },
-        allowedRadius: config.allowedRadius  // Tell client exactly what radius was used
+        allowedRadius: config.allowedRadius,
+        geofence: {
+          latitude: config.latitude,
+          longitude: config.longitude,
+          allowedRadius: config.allowedRadius,
+          isActive: geofenceActive
+        }
       });
     } catch (err) {
       console.error('[PUNCH-IN]', err);
@@ -145,7 +151,7 @@ router.post(
       });
 
       if (!record) {
-        return res.status(404).json({ success: false, message: 'No active clock-in found.' });
+        return res.status(404).json({ success: false, message: 'No active punch-in found.' });
       }
 
       const clockOutTime = new Date();
@@ -162,7 +168,7 @@ router.post(
 
       return res.status(200).json({
         success: true,
-        message: autoClockOut ? 'Auto clocked-out (geofence breach).' : 'Clocked out successfully.',
+        message: autoClockOut ? 'Auto punched out after leaving the work zone.' : 'Punched out successfully.',
         record: {
           id: record._id,
           clockInTime: record.clockInTime,

@@ -3,27 +3,20 @@ package com.gpunch.utils
 import android.content.Context
 import android.location.Location
 import android.provider.Settings
-import kotlin.math.*
 
 /**
  * Client-side geofence utilities.
- * Mirrors the Haversine logic in the backend for pre-validation before API call.
+ * Uses Android's native distance calculation for client-side pre-validation.
  */
 object GeofenceUtils {
 
     /**
-     * Calculate distance in metres between two lat/lon pairs using the Haversine formula.
-     * Equivalent to Android's Location.distanceBetween().
+     * Calculate distance in metres between two lat/lon pairs using Location.distanceBetween().
      */
-    fun haversineDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-        val R = 6_371_000.0
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLon = Math.toRadians(lon2 - lon1)
-        val a = sin(dLat / 2).pow(2) +
-                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
-                sin(dLon / 2).pow(2)
-        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
-        return R * c
+    fun distanceBetween(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val results = FloatArray(1)
+        Location.distanceBetween(lat1, lon1, lat2, lon2, results)
+        return results[0].toDouble()
     }
 
     /**

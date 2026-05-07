@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">GPunch</string>
     <string name="notification_channel_name">GPunch Location Service</string>
-    <string name="notification_channel_desc">Monitors your location for automatic clock-out when you leave the work zone</string>
+    <string name="notification_channel_desc">Monitors your location for automatic punch-out when you leave the work zone</string>
     <string name="notification_title">GPunch is active</string>
     <string name="notification_text">Location monitoring active – tap to open the app</string>
 
@@ -20,10 +20,10 @@
     <string name="link_create_account">Don\'t have an account? Register</string>
 
     <!-- Dashboard -->
-    <string name="btn_clock_in">Clock In</string>
-    <string name="btn_clock_out">Clock Out</string>
-    <string name="status_clocked_in">● Clocked In</string>
-    <string name="status_clocked_out">● Clocked Out</string>
+    <string name="btn_clock_in">Punch In</string>
+    <string name="btn_clock_out">Punch Out</string>
+    <string name="status_clocked_in">Punched In</string>
+    <string name="status_clocked_out">Punched Out</string>
     <string name="label_location">Current Location</string>
     <string name="label_duration">Duration</string>
     <string name="btn_logout">Logout</string>

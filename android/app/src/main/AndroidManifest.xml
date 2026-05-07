@@ -29,6 +29,7 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
+        android:usesCleartextTraffic="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.GPunch"
         tools:targetApi="31">
@@ -67,6 +68,11 @@
             android:name=".ui.activities.AdminActivity"
             android:exported="false"
             android:parentActivityName=".ui.activities.DashboardActivity" />
+
+        <activity
+            android:name=".ui.activities.GeofenceMapPickerActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.activities.AdminActivity" />
 
         <!-- Foreground Service for auto clock-out geofence monitoring -->
         <service

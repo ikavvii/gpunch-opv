@@ -41,10 +41,6 @@ class PendingClockOutWorker(
 
         val sessionManager = SessionManager(applicationContext)
 
-        // If the user somehow already clocked out (e.g. manual clock-out succeeded later),
-        // there is nothing to do.
-        if (!sessionManager.isClockedIn()) return Result.success()
-
         return try {
             val apiService = RetrofitClient.getInstance(sessionManager)
                 .create(GpunchApiService::class.java)
@@ -58,7 +54,7 @@ class PendingClockOutWorker(
                 )
             )
 
-            if (response.isSuccessful) {
+            if (response.isSuccessful || response.code() == 404 || response.code() == 409) {
                 sessionManager.setIsClockedIn(false)
                 Result.success()
             } else {

@@ -20,6 +20,10 @@ class SessionManager(context: Context) {
         private const val KEY_CLOCK_IN_TIME = "clock_in_time"
         private const val KEY_ACTIVE_RECORD_ID = "active_record_id"
         private const val KEY_PENDING_EMAIL = "pending_email"
+        private const val KEY_FENCE_LAT = "fence_lat"
+        private const val KEY_FENCE_LNG = "fence_lng"
+        private const val KEY_FENCE_RADIUS = "fence_radius"
+        private const val KEY_FENCE_ACTIVE = "fence_active"
     }
 
     private val prefs: SharedPreferences =
@@ -63,6 +67,21 @@ class SessionManager(context: Context) {
     fun isClockedIn(): Boolean = prefs.getBoolean(KEY_IS_CLOCKED_IN, false)
     fun getClockInTime(): Long = prefs.getLong(KEY_CLOCK_IN_TIME, 0L)
     fun getActiveRecordId(): String? = prefs.getString(KEY_ACTIVE_RECORD_ID, null)
+
+    fun saveFence(lat: Double, lng: Double, radius: Double, active: Boolean = true) {
+        prefs.edit()
+            .putLong(KEY_FENCE_LAT, lat.toBits())
+            .putLong(KEY_FENCE_LNG, lng.toBits())
+            .putLong(KEY_FENCE_RADIUS, radius.toBits())
+            .putBoolean(KEY_FENCE_ACTIVE, active)
+            .apply()
+    }
+
+    fun getFenceLat(): Double = Double.fromBits(prefs.getLong(KEY_FENCE_LAT, 0.0.toBits()))
+    fun getFenceLng(): Double = Double.fromBits(prefs.getLong(KEY_FENCE_LNG, 0.0.toBits()))
+    fun getFenceRadius(): Double = Double.fromBits(prefs.getLong(KEY_FENCE_RADIUS, 0.0.toBits()))
+    fun isFenceActive(): Boolean = prefs.getBoolean(KEY_FENCE_ACTIVE, true)
+    fun hasFence(): Boolean = getFenceRadius() > 0.0
 
     fun setPendingEmail(email: String) {
         prefs.edit().putString(KEY_PENDING_EMAIL, email).apply()

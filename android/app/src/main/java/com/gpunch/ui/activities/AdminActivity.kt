@@ -1,10 +1,11 @@
 package com.gpunch.ui.activities
 
+import android.app.Activity
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import androidx.activity.viewModels
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
@@ -21,7 +22,9 @@ import com.gpunch.databinding.FragmentAdminAuditBinding
 import com.gpunch.databinding.FragmentAdminGeofenceBinding
 import com.gpunch.databinding.FragmentAdminUsersBinding
 import com.gpunch.databinding.ItemAuditLogBinding
+import com.gpunch.databinding.ItemAbsenteeBinding
 import com.gpunch.databinding.ItemUserBinding
+import com.gpunch.models.AttendanceItemDto
 import com.gpunch.models.AuditLogItemDto
 import com.gpunch.models.UserItemDto
 import com.gpunch.ui.viewmodels.AdminUiEvent
@@ -31,7 +34,7 @@ import com.gpunch.utils.SessionManager
 class AdminActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityAdminBinding
-    private val viewModel: AdminViewModel by viewModels()
+    val viewModel: AdminViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,11 +44,12 @@ class AdminActivity : AppCompatActivity() {
         setSupportActionBar(binding.toolbar)
         binding.toolbar.setNavigationOnClickListener { onBackPressedDispatcher.onBackPressed() }
 
-        val tabs = listOf("Geofence", "Users", "Audit Logs")
+        val tabs = listOf("Geofence", "Users", "Audit Logs", "Attendance")
         val fragments: List<Fragment> = listOf(
             GeofenceFragment(),
             UsersFragment(),
-            AuditLogsFragment()
+            AuditLogsFragment(),
+            AttendanceFragment()
         )
 
         binding.viewPager.adapter = object : FragmentStateAdapter(this) {
@@ -84,6 +88,14 @@ class AdminActivity : AppCompatActivity() {
         private val viewModel: AdminViewModel by lazy {
             (requireActivity() as AdminActivity).viewModel
         }
+        private val mapPickerLauncher =
+            registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                if (result.resultCode == Activity.RESULT_OK) {
+                    val data = result.data ?: return@registerForActivityResult
+                    b.etLatitude.setText(data.getDoubleExtra(GeofenceMapPickerActivity.EXTRA_LATITUDE, 0.0).toString())
+                    b.etLongitude.setText(data.getDoubleExtra(GeofenceMapPickerActivity.EXTRA_LONGITUDE, 0.0).toString())
+                }
+            }
 
         override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
             super.onViewCreated(view, savedInstanceState)
@@ -94,21 +106,33 @@ class AdminActivity : AppCompatActivity() {
                 b.etLatitude.setText(config.latitude.toString())
                 b.etLongitude.setText(config.longitude.toString())
                 b.etRadius.setText(config.allowedRadius.toInt().toString())
-                b.etDomain.setText(config.allowedDomain)
+                b.etDomain.setText((config.allowedDomains?.takeIf { it.isNotEmpty() } ?: listOf(config.allowedDomain)).joinToString(", "))
+                b.switchGeofenceActive.isChecked = config.isActive != false
             }
 
             b.btnRefreshGeofence.setOnClickListener { viewModel.loadGeofenceConfig() }
+            b.btnPickOnMap.setOnClickListener {
+                val lat = b.etLatitude.text.toString().toDoubleOrNull() ?: 11.0168
+                val lng = b.etLongitude.text.toString().toDoubleOrNull() ?: 76.9558
+                val radius = b.etRadius.text.toString().toIntOrNull() ?: 100
+                mapPickerLauncher.launch(
+                    Intent(requireContext(), GeofenceMapPickerActivity::class.java)
+                        .putExtra(GeofenceMapPickerActivity.EXTRA_LATITUDE, lat)
+                        .putExtra(GeofenceMapPickerActivity.EXTRA_LONGITUDE, lng)
+                        .putExtra(GeofenceMapPickerActivity.EXTRA_RADIUS, radius)
+                )
+            }
 
             b.btnSaveGeofence.setOnClickListener {
                 val lat = b.etLatitude.text.toString().toDoubleOrNull()
                 val lng = b.etLongitude.text.toString().toDoubleOrNull()
                 val radius = b.etRadius.text.toString().toIntOrNull()
-                val domain = b.etDomain.text.toString().trim()
-                if (lat == null || lng == null || radius == null || domain.isEmpty()) {
+                val domains = b.etDomain.text.toString().trim()
+                if (lat == null || lng == null || radius == null || domains.isEmpty()) {
                     Snackbar.make(b.root, "All fields are required", Snackbar.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
-                viewModel.updateGeofenceConfig(lat, lng, radius, domain)
+                viewModel.updateGeofenceConfig(lat, lng, radius, domains, b.switchGeofenceActive.isChecked)
             }
 
             viewModel.loadGeofenceConfig()
@@ -244,11 +268,197 @@ class AuditLogAdapter :
         val log = getItem(position)
         holder.b.chipEventType.text = log.eventType.replace('_', ' ')
         holder.b.tvLogTime.text = log.createdAt.take(19).replace('T', ' ')
-        holder.b.tvLogAndroidId.text = if (log.androidId != null) "ID: ${log.androidId.take(16)}…" else ""
+        holder.b.tvLogSubject.text = log.email ?: "Unknown user"
+        holder.b.tvLogReason.text = auditReason(log)
+        holder.b.tvLogAndroidId.text = if (log.androidId != null) "Device: ${log.androidId.take(16)}…" else "Device: not supplied"
         if (log.latitude != null && log.longitude != null) {
-            holder.b.tvLogLocation.text = "%.5f, %.5f".format(log.latitude, log.longitude)
+            val distance = log.distanceFromZone?.let { " - ${it}m from zone" } ?: ""
+            holder.b.tvLogLocation.text = "Location: %.5f, %.5f%s".format(log.latitude, log.longitude, distance)
         } else {
-            holder.b.tvLogLocation.text = ""
+            holder.b.tvLogLocation.text = "Location: not supplied"
         }
+        holder.b.tvLogNetwork.text = "IP: ${log.ipAddress ?: "unknown"}"
+    }
+
+    private fun auditReason(log: AuditLogItemDto): String {
+        val metadata = log.metadata.orEmpty()
+        return when (log.eventType) {
+            "INVALID_DOMAIN" -> {
+                val attempted = metadata["attemptedDomain"] ?: "unknown"
+                val allowed = metadata["allowedDomain"] ?: "configured domain"
+                "Registration blocked: @$attempted is not @$allowed."
+            }
+            "UNAUTHORIZED_DEVICE" -> {
+                val bound = metadata["boundDevice"] ?: "registered device"
+                "Device mismatch against $bound."
+            }
+            "OTP_FAILED" -> "OTP verification failed: ${metadata["reason"] ?: "unknown reason"}."
+            "MOCK_LOCATION" -> "Mock or spoofed location was reported by the phone."
+            "OUT_OF_BOUNDS" -> {
+                val allowed = metadata["allowedRadius"] ?: "configured"
+                "Punch attempted outside the ${allowed}m radius."
+            }
+            else -> metadata.entries.joinToString { "${it.key}: ${it.value}" }.ifBlank { "No extra details." }
+        }
+    }
+}
+
+// ─── Attendance Fragment ────────────────────────────────────────────
+
+class AttendanceFragment : Fragment(com.gpunch.R.layout.fragment_admin_attendance) {
+    private var _b: com.gpunch.databinding.FragmentAdminAttendanceBinding? = null
+    private val b get() = _b!!
+    private val viewModel: AdminViewModel by lazy {
+        (requireActivity() as AdminActivity).viewModel
+    }
+    private val adapter = AttendanceAdapter()
+    private val absenteeAdapter = AbsenteeAdapter()
+    private var showingAbsentees = false
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        _b = com.gpunch.databinding.FragmentAdminAttendanceBinding.bind(view)
+
+        b.rvAttendance.layoutManager = LinearLayoutManager(requireContext())
+        b.rvAttendance.adapter = adapter
+        b.rvAbsentees.layoutManager = LinearLayoutManager(requireContext())
+        b.rvAbsentees.adapter = absenteeAdapter
+
+        viewModel.attendanceRecords.observe(viewLifecycleOwner) { records ->
+            adapter.submitList(records)
+        }
+        viewModel.attendanceTotal.observe(viewLifecycleOwner) { total ->
+            b.tvRecordCount.text = "Punch records ($total)"
+        }
+        viewModel.attendanceSummary.observe(viewLifecycleOwner) { summary ->
+            summary?.let {
+                b.tvTodayCount.text = (it.today?.uniqueUsers ?: it.today?.count ?: 0).toString()
+                b.tvActiveCount.text = (it.today?.activeNow ?: 0).toString()
+                b.tvHoursToday.text = String.format(java.util.Locale.US, "%.1f", it.today?.totalHours ?: 0.0)
+                b.tvYesterdayCount.text = (it.yesterday?.uniqueUsers ?: it.yesterday?.count ?: 0).toString()
+            }
+        }
+        viewModel.attendanceAbsentees.observe(viewLifecycleOwner) { users ->
+            absenteeAdapter.submitList(users)
+        }
+        viewModel.attendanceAbsenteesTotal.observe(viewLifecycleOwner) { total ->
+            b.tvAbsenteeCount.text = if (showingAbsentees) "Absentees ($total)" else "Absentees hidden"
+        }
+
+        // Load summary on first load
+        viewModel.loadAttendanceSummary()
+
+        // Date filter
+        b.btnFilterDate.setOnClickListener {
+            val date = b.etDate.text.toString().trim()
+            if (date.isNotEmpty()) {
+                viewModel.loadAttendanceReport(date = date)
+            } else {
+                viewModel.loadAttendanceReport()
+            }
+        }
+
+        // Search
+        b.btnSearch.setOnClickListener {
+            val search = b.etSearch.text.toString().trim()
+            viewModel.loadAttendanceReport(search = search.ifEmpty { null })
+        }
+
+        b.btnShowAbsentees.setOnClickListener {
+            showingAbsentees = !showingAbsentees
+            b.rvAbsentees.visibility = if (showingAbsentees) View.VISIBLE else View.GONE
+            b.btnShowAbsentees.text = if (showingAbsentees) "Hide Absentees" else "Show Absentees"
+            if (showingAbsentees) {
+                viewModel.loadAttendanceAbsentees(selectedDate())
+            } else {
+                b.tvAbsenteeCount.text = "Absentees hidden"
+            }
+        }
+
+        // Export buttons
+        b.btnExportToday.setOnClickListener {
+            val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+            exportCsv(date = today)
+        }
+
+        b.btnExportCsv.setOnClickListener {
+            exportCsv()
+        }
+
+        // Initial load
+        viewModel.loadAttendanceReport()
+    }
+
+    private fun exportCsv(date: String? = null) {
+        viewModel.exportCsv(date = date) { _, message ->
+            Snackbar.make(b.root, message ?: "Export completed", Snackbar.LENGTH_LONG).show()
+        }
+    }
+
+    private fun selectedDate(): String {
+        return b.etDate.text.toString().trim().ifEmpty {
+            java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+        }
+    }
+
+    override fun onDestroyView() { super.onDestroyView(); _b = null }
+}
+
+// ─── Attendance RecyclerView Adapter ───────────────────────────────
+
+class AttendanceAdapter :
+    ListAdapter<AttendanceItemDto, AttendanceAdapter.VH>(object : DiffUtil.ItemCallback<AttendanceItemDto>() {
+        override fun areItemsTheSame(a: AttendanceItemDto, b: AttendanceItemDto) = a.id == b.id
+        override fun areContentsTheSame(a: AttendanceItemDto, b: AttendanceItemDto) = a == b
+    }) {
+
+    inner class VH(val b: com.gpunch.databinding.ItemAttendanceBinding) : RecyclerView.ViewHolder(b.root)
+
+    override fun onCreateViewHolder(parent: android.view.ViewGroup, viewType: Int) =
+        VH(com.gpunch.databinding.ItemAttendanceBinding.inflate(android.view.LayoutInflater.from(parent.context), parent, false))
+
+    override fun onBindViewHolder(holder: VH, position: Int) {
+        val record = getItem(position)
+        val name = record.userId?.name ?: "Unknown"
+        val email = record.userId?.email ?: "Unknown"
+
+        holder.b.tvUserName.text = name
+        holder.b.tvUserEmail.text = email
+
+        // Format clock-in time
+        holder.b.tvClockIn.text = record.clockInTime?.take(19)?.replace('T', ' ') ?: "--"
+
+        // Format clock-out time
+        holder.b.tvClockOut.text = record.clockOutTime?.take(19)?.replace('T', ' ') ?: "Active"
+
+        // Format duration
+        holder.b.tvDuration.text = if (record.durationMinutes != null) {
+            val hrs = record.durationMinutes / 60
+            val mins = record.durationMinutes % 60
+            if (hrs > 0) "${hrs}h ${mins}m" else "${mins}m"
+        } else {
+            "--"
+        }
+
+        // Show auto clock-out chip
+        holder.b.chipAutoClockOut.visibility = if (record.autoClockOut) View.VISIBLE else View.GONE
+    }
+}
+
+class AbsenteeAdapter :
+    ListAdapter<UserItemDto, AbsenteeAdapter.VH>(object : DiffUtil.ItemCallback<UserItemDto>() {
+        override fun areItemsTheSame(a: UserItemDto, b: UserItemDto) = a.id == b.id
+        override fun areContentsTheSame(a: UserItemDto, b: UserItemDto) = a == b
+    }) {
+
+    inner class VH(val b: ItemAbsenteeBinding) : RecyclerView.ViewHolder(b.root)
+
+    override fun onCreateViewHolder(parent: android.view.ViewGroup, viewType: Int) =
+        VH(ItemAbsenteeBinding.inflate(android.view.LayoutInflater.from(parent.context), parent, false))
+
+    override fun onBindViewHolder(holder: VH, position: Int) {
+        val user = getItem(position)
+        holder.b.tvAbsenteeName.text = user.name
+        holder.b.tvAbsenteeEmail.text = user.email
     }
 }

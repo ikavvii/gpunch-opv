@@ -15,4 +15,5 @@
     <color name="colorWarning">#FBBC04</color>
     <color name="statusGreen">#34A853</color>
     <color name="statusRed">#EA4335</color>
+    <color name="ic_launcher_background">#0B1F36</color>
 </resources>

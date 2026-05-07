@@ -1,11 +1,13 @@
 package com.gpunch.services
 
 import android.app.Notification
+import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.location.Location
+import android.os.Build
 import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -31,8 +33,8 @@ import java.io.IOException
 
 /**
  * Foreground Service that continuously monitors the user's GPS position while
- * they are clocked in. When a geofence breach is detected it automatically
- * calls the clock-out API endpoint.
+ * they are punched in. When a geofence breach is detected it automatically
+ * calls the punch-out API endpoint.
  *
  * Battery-optimisation strategy:
  *  – When STATIONARY (no movement between samples) → interval relaxed to 60s
@@ -42,7 +44,7 @@ class GeofenceMonitorService : LifecycleService() {
 
     companion object {
         const val ACTION_START = "ACTION_START_GEOFENCE"
-        const val ACTION_STOP = "ACTION_STOP_GEOFENCE"
+        const val ACTION_STOP = "ACTION_STOP"
 
         const val EXTRA_FENCE_LAT = "FENCE_LAT"
         const val EXTRA_FENCE_LNG = "FENCE_LNG"
@@ -80,6 +82,8 @@ class GeofenceMonitorService : LifecycleService() {
 
     private var lastLocation: Location? = null
     private var isStationary = false
+    private var isFirstLocation = true // Skip first location check to allow GPS to stabilize
+    private var gracePeriodEndTime = 0L // Grace period after clock-in
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -89,7 +93,7 @@ class GeofenceMonitorService : LifecycleService() {
         }
     }
 
-    // ─── Lifecycle ────────────────────────────────────────────────────────────
+    // ─── Lifecycle ────────────────────────────────────────────────────
 
     override fun onCreate() {
         super.onCreate()
@@ -107,10 +111,27 @@ class GeofenceMonitorService : LifecycleService() {
                 fenceLat = intent.getDoubleExtra(EXTRA_FENCE_LAT, 0.0)
                 fenceLng = intent.getDoubleExtra(EXTRA_FENCE_LNG, 0.0)
                 fenceRadius = intent.getDoubleExtra(EXTRA_FENCE_RADIUS, 100.0)
+
+                // CRITICAL FIX: Add 60-second grace period after clock-in
+                // This prevents immediate auto clock-out due to GPS settling
+                gracePeriodEndTime = System.currentTimeMillis() + 60_000L
+                Log.i("GeofenceService", "Grace period set until: ${java.util.Date(gracePeriodEndTime)}")
+
                 startForeground(GPunchApp.NOTIFICATION_ID, buildNotification())
                 startLocationUpdates()
             }
             ACTION_STOP -> stopSelf()
+            null -> {
+                if (sessionManager.isClockedIn() && sessionManager.isFenceActive() && sessionManager.hasFence()) {
+                    fenceLat = sessionManager.getFenceLat()
+                    fenceLng = sessionManager.getFenceLng()
+                    fenceRadius = sessionManager.getFenceRadius()
+                    startForeground(GPunchApp.NOTIFICATION_ID, buildNotification())
+                    startLocationUpdates()
+                } else {
+                    stopSelf()
+                }
+            }
         }
 
         return START_STICKY
@@ -122,7 +143,7 @@ class GeofenceMonitorService : LifecycleService() {
         serviceScope.cancel()
     }
 
-    // ─── Location Updates ─────────────────────────────────────────────────────
+    // ─── Location Updates ─────────────────────────────────────────────
 
     private fun startLocationUpdates() {
         val request = buildLocationRequest(INTERVAL_ACTIVE_MS)
@@ -149,6 +170,20 @@ class GeofenceMonitorService : LifecycleService() {
             return
         }
 
+        // Skip first location reading to allow GPS to stabilize
+        if (isFirstLocation) {
+            isFirstLocation = false
+            lastLocation = location
+            return
+        }
+
+        // CRITICAL FIX: Check grace period - don't trigger for 60s after clock-in
+        if (System.currentTimeMillis() < gracePeriodEndTime) {
+            Log.i("GeofenceService", "Grace period active - skipping geofence check for ${gracePeriodEndTime - System.currentTimeMillis()}ms more")
+            lastLocation = location
+            return
+        }
+
         // Battery optimisation: adapt polling interval based on movement
         val last = lastLocation
         if (last != null) {
@@ -169,17 +204,17 @@ class GeofenceMonitorService : LifecycleService() {
         }
         lastLocation = location
 
-        // Geofence check
-        val distance = GeofenceUtils.haversineDistance(
+        val distance = GeofenceUtils.distanceBetween(
             fenceLat, fenceLng, location.latitude, location.longitude
         )
 
         if (distance > fenceRadius) {
+            Log.i("GeofenceService", "Geofence breach detected: ${distance}m from center (radius: ${fenceRadius}m)")
             triggerAutoClockOut(location)
         }
     }
 
-    // ─── Auto Clock-Out ───────────────────────────────────────────────────────
+    // ─── Auto Clock-Out ───────────────────────────────────────────────
 
     private fun triggerAutoClockOut(location: Location) {
         val androidId = sessionManager.getAndroidId() ?: return
@@ -258,18 +293,32 @@ class GeofenceMonitorService : LifecycleService() {
         }
     }
 
-    // ─── Notifications ────────────────────────────────────────────────────────
+    // ─── Notifications ────────────────────────────────────────────────
 
     private fun buildNotification(): Notification {
+        // Ensure notification channel exists (for Android O+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                GPunchApp.NOTIFICATION_CHANNEL_ID,
+                "Presence Monitoring",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Shows when GPunch is verifying your work-zone presence"
+                setShowBadge(false)
+            }
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
             Intent(this, DashboardActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, GPunchApp.NOTIFICATION_CHANNEL_ID)
-            .setContentTitle(getString(R.string.notification_title))
-            .setContentText(getString(R.string.notification_text))
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("GPunch presence verification")
+            .setContentText("Monitoring work-zone status for automatic punch-out.")
+            .setSmallIcon(R.drawable.ic_stat_gpunch)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -277,10 +326,13 @@ class GeofenceMonitorService : LifecycleService() {
     }
 
     private fun showAutoClockOutNotification() {
+        // Cancel the foreground notification first
+        stopForeground(true)
+
         val notification = NotificationCompat.Builder(this, GPunchApp.NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("GPunch – Auto Clocked Out")
-            .setContentText("You have left the work zone. Attendance has been recorded.")
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("GPunch auto punch-out")
+            .setContentText("You left the work zone. Attendance has been recorded.")
+            .setSmallIcon(R.drawable.ic_stat_gpunch)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()

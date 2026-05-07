@@ -42,8 +42,8 @@ router.post(
         email: user.email,
         androidId,
         eventType,
-        latitude: latitude || null,
-        longitude: longitude || null,
+        latitude: latitude ?? null,
+        longitude: longitude ?? null,
         ipAddress: req.ip,
         metadata: metadata || {}
       });

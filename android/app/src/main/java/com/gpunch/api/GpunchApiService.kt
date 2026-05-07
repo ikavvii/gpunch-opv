@@ -35,7 +35,7 @@ interface GpunchApiService {
     suspend fun getPunchHistory(
         @Query("page") page: Int = 1,
         @Query("limit") limit: Int = 20
-    ): Response<GenericResponse>
+    ): Response<PunchHistoryResponse>
 
     // ─── Admin / Config ───────────────────────────────────────────────────────
 
@@ -61,10 +61,37 @@ interface GpunchApiService {
         @Query("eventType") eventType: String? = null
     ): Response<AuditLogsResponse>
 
+    @GET("api/admin/attendance")
+    suspend fun getAttendanceReport(
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 20,
+        @Query("date") date: String? = null,
+        @Query("startDate") startDate: String? = null,
+        @Query("endDate") endDate: String? = null,
+        @Query("search") search: String? = null
+    ): Response<AttendanceReportResponse>
+
+    @GET("api/admin/attendance/summary")
+    suspend fun getAttendanceSummary(): Response<AttendanceSummaryResponse>
+
+    @GET("api/admin/attendance/absentees")
+    suspend fun getAttendanceAbsentees(
+        @Query("date") date: String
+    ): Response<AbsenteesResponse>
+
     // Note: export-csv returns a raw CSV file; handled via OkHttp directly in the ViewModel.
 
-    // ─── Audit ────────────────────────────────────────────────────────────────
+    // ─── Audit ────────────────────────────────────────────────────────
 
     @POST("api/audit")
     suspend fun logAuditEvent(@Body request: AuditRequest): Response<AuditLogResponse>
+
+    // ─── Export CSV ─────────────────────────────────────────────────
+
+    @GET("api/admin/export-csv")
+    suspend fun exportCsv(
+        @Query("date") date: String? = null,
+        @Query("startDate") startDate: String? = null,
+        @Query("endDate") endDate: String? = null
+    ): Response<okhttp3.ResponseBody>
 }

@@ -31,6 +31,63 @@ const VALID_EVENT_TYPES = [
 
 const router = express.Router();
 
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildDateFilter(query) {
+  if (query.date) {
+    const date = new Date(query.date);
+    if (Number.isNaN(date.getTime())) return { error: 'Invalid date filter.' };
+    const nextDay = new Date(date);
+    nextDay.setDate(date.getDate() + 1);
+    return { filter: { clockInTime: { $gte: date, $lt: nextDay } } };
+  }
+
+  if (query.startDate && query.endDate) {
+    const start = new Date(query.startDate);
+    const end = new Date(query.endDate);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      return { error: 'Invalid date range.' };
+    }
+    return { filter: { clockInTime: { $gte: start, $lte: end } } };
+  }
+
+  return { filter: {} };
+}
+
+function csvCell(value) {
+  const raw = value == null ? '' : String(value);
+  return `"${raw.replace(/"/g, '""')}"`;
+}
+
+function userKey(record) {
+  const user = record.userId;
+  if (!user) return null;
+  return String(user._id || user);
+}
+
+function summarizeAttendance(records) {
+  const uniqueUsers = new Set(records.map(userKey).filter(Boolean));
+  const totalMinutes = records.reduce((sum, record) => sum + (record.durationMinutes || 0), 0);
+  return {
+    uniqueUsers: uniqueUsers.size,
+    totalPunches: records.length,
+    activeNow: records.filter(record => !record.clockOutTime).length,
+    totalMinutes,
+    totalHours: Number((totalMinutes / 60).toFixed(2))
+  };
+}
+
+function normalizeDomains(value) {
+  const raw = Array.isArray(value) ? value : String(value || '').split(',');
+  return [...new Set(
+    raw
+      .map(domain => String(domain).trim().replace(/^@/, '').toLowerCase())
+      .filter(Boolean)
+  )];
+}
+
 // ─── Seed first admin (bootstrap – no auth required) ─────────────────────────
 router.post(
   '/seed',
@@ -70,6 +127,16 @@ router.post(
   }
 );
 
+// Authenticated users need the active geofence for client-side pre-checks.
+router.get('/geofence', protect, async (_req, res) => {
+  try {
+    const config = await GeofenceConfig.findOne().sort({ updatedAt: -1 });
+    return res.json({ success: true, config });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
 // All routes below require JWT + admin role
 router.use(protect, adminOnly);
 
@@ -80,7 +147,8 @@ router.post(
     body('latitude').isFloat({ min: -90, max: 90 }),
     body('longitude').isFloat({ min: -180, max: 180 }),
     body('allowedRadius').isInt({ min: 10, max: 100000 }).withMessage('Radius 10–100000 metres'),
-    body('allowedDomain').trim().notEmpty().withMessage('Domain required (e.g. psgtech.ac.in)')
+    body('allowedDomain').trim().notEmpty().withMessage('At least one domain required (e.g. psgtech.ac.in)'),
+    body('isActive').optional().isBoolean()
   ],
   async (req, res) => {
     const errors = validationResult(req);
@@ -88,6 +156,10 @@ router.post(
       return res.status(400).json({ success: false, errors: errors.array() });
 
     const { latitude, longitude, allowedRadius, allowedDomain } = req.body;
+    const allowedDomains = normalizeDomains(req.body.allowedDomains || allowedDomain);
+    if (!allowedDomains.length) {
+      return res.status(400).json({ success: false, message: 'At least one domain is required.' });
+    }
     try {
       // Use explicit typed values to prevent NoSQL operator injection
       const config = await GeofenceConfig.findOneAndUpdate(
@@ -96,7 +168,9 @@ router.post(
           latitude: parseFloat(latitude),
           longitude: parseFloat(longitude),
           allowedRadius: parseInt(allowedRadius, 10),
-          allowedDomain: String(allowedDomain).toLowerCase().trim(),
+          allowedDomain: allowedDomains[0],
+          allowedDomains,
+          isActive: req.body.isActive !== false,
           updatedBy: req.user._id
         },
         { upsert: true, new: true, setDefaultsOnInsert: true }
@@ -108,16 +182,6 @@ router.post(
     }
   }
 );
-
-// ─── GET /api/admin/geofence ──────────────────────────────────────────────────
-router.get('/geofence', async (_req, res) => {
-  try {
-    const config = await GeofenceConfig.findOne().sort({ updatedAt: -1 });
-    return res.json({ success: true, config });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: 'Internal server error' });
-  }
-});
 
 // ─── POST /api/admin/reset-device/:userId ─────────────────────────────
 router.post('/reset-device/:userId', async (req, res) => {
@@ -194,40 +258,62 @@ router.get('/attendance', async (req, res) => {
     const limit = Math.min(100, parseInt(req.query.limit || '20', 10));
     const skip = (page - 1) * limit;
 
-    // Date filters
-    const filter = {};
-    if (req.query.date) {
-      const date = new Date(req.query.date);
-      const nextDay = new Date(date);
-      nextDay.setDate(date.getDate() + 1);
-      filter.clockInTime = { $gte: date, $lt: nextDay };
-    } else if (req.query.startDate && req.query.endDate) {
-      filter.clockInTime = {
-        $gte: new Date(req.query.startDate),
-        $lte: new Date(req.query.endDate)
-      };
-    }
+    const { filter, error } = buildDateFilter(req.query);
+    if (error) return res.status(400).json({ success: false, message: error });
 
     // Filter by user email or name
     if (req.query.search) {
-      const searchRegex = new RegExp(req.query.search, 'i');
+      const searchRegex = new RegExp(escapeRegex(req.query.search), 'i');
       const users = await User.find({
         $or: [{ name: searchRegex }, { email: searchRegex }]
       }).select('_id').lean();
       filter.userId = { $in: users.map(u => u._id) };
     }
 
-    const [records, total] = await Promise.all([
+    const [records, total, totals] = await Promise.all([
       AttendanceRecord.find(filter)
         .populate('userId', 'name email')
         .sort({ clockInTime: -1 })
         .skip(skip)
         .limit(limit)
         .lean(),
-      AttendanceRecord.countDocuments(filter)
+      AttendanceRecord.countDocuments(filter),
+      AttendanceRecord.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: null,
+            totalMinutes: { $sum: { $ifNull: ['$durationMinutes', 0] } },
+            uniqueUserIds: { $addToSet: '$userId' },
+            activeNow: {
+              $sum: {
+                $cond: [{ $eq: [{ $ifNull: ['$clockOutTime', null] }, null] }, 1, 0]
+              }
+            }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            totalMinutes: 1,
+            uniqueUsers: { $size: '$uniqueUserIds' },
+            activeNow: 1
+          }
+        }
+      ])
     ]);
+    const reportTotals = totals[0] || { totalMinutes: 0, uniqueUsers: 0, activeNow: 0 };
 
-    return res.json({ success: true, page, total, records });
+    return res.json({
+      success: true,
+      page,
+      total,
+      uniqueUsers: reportTotals.uniqueUsers,
+      activeNow: reportTotals.activeNow,
+      totalMinutes: reportTotals.totalMinutes,
+      totalHours: Number((reportTotals.totalMinutes / 60).toFixed(2)),
+      records
+    });
   } catch (err) {
     console.error('[ADMIN ATTENDANCE]', err);
     return res.status(500).json({ success: false, message: 'Internal server error' });
@@ -257,14 +343,8 @@ router.get('/attendance/summary', async (req, res) => {
 
     return res.json({
       success: true,
-      today: {
-        count: todayRecords.length,
-        records: todayRecords
-      },
-      yesterday: {
-        count: yesterdayRecords.length,
-        records: yesterdayRecords
-      },
+      today: { ...summarizeAttendance(todayRecords), records: todayRecords },
+      yesterday: { ...summarizeAttendance(yesterdayRecords), records: yesterdayRecords },
       totalActiveUsers: totalUsers
     });
   } catch (err) {
@@ -273,22 +353,37 @@ router.get('/attendance/summary', async (req, res) => {
   }
 });
 
+// ─── GET /api/admin/attendance/absentees ─────────────────────────────
+router.get('/attendance/absentees', async (req, res) => {
+  try {
+    const { filter, error } = buildDateFilter({ date: req.query.date || new Date().toISOString().slice(0, 10) });
+    if (error) return res.status(400).json({ success: false, message: error });
+
+    const records = await AttendanceRecord.find(filter).select('userId').lean();
+    const presentIds = records.map(r => r.userId).filter(Boolean);
+    const users = await User.find({
+      isActive: true,
+      role: 'user',
+      _id: { $nin: presentIds }
+    }).select('name email role isActive isVerified androidId').sort({ name: 1 }).lean();
+
+    return res.json({
+      success: true,
+      date: req.query.date || new Date().toISOString().slice(0, 10),
+      total: users.length,
+      users
+    });
+  } catch (err) {
+    console.error('[ADMIN ABSENTEES]', err);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
 // ─── GET /api/admin/export-csv ────────────────────────────────────────
 router.get('/export-csv', async (req, res) => {
   try {
-    // Date filters
-    const filter = {};
-    if (req.query.date) {
-      const date = new Date(req.query.date);
-      const nextDay = new Date(date);
-      nextDay.setDate(date.getDate() + 1);
-      filter.clockInTime = { $gte: date, $lt: nextDay };
-    } else if (req.query.startDate && req.query.endDate) {
-      filter.clockInTime = {
-        $gte: new Date(req.query.startDate),
-        $lte: new Date(req.query.endDate)
-      };
-    }
+    const { filter, error } = buildDateFilter(req.query);
+    if (error) return res.status(400).json({ success: false, message: error });
 
     const records = await AttendanceRecord.find(filter)
       .populate('userId', 'name email')
@@ -296,7 +391,7 @@ router.get('/export-csv', async (req, res) => {
       .lean();
 
     // Build CSV manually for zero extra deps in prod
-    const header = 'Name,Email,Clock-In,Clock-Out,Duration (min),Auto Clock-Out,Android ID\n';
+    const header = 'Name,Email,Punch In,Punch Out,Duration (min),Auto Punch Out,Android ID\n';
     const rows = records.map((r) => {
       const name = r.userId ? r.userId.name : '';
       const email = r.userId ? r.userId.email : r.email;
@@ -305,7 +400,7 @@ router.get('/export-csv', async (req, res) => {
       const dur = r.durationMinutes != null ? r.durationMinutes : '';
       const auto = r.autoClockOut ? 'Yes' : 'No';
       const aid = r.androidId || '';
-      return `"${name}","${email}","${inn}","${out}","${dur}","${auto}","${aid}"`;
+      return [name, email, inn, out, dur, auto, aid].map(csvCell).join(',');
     });
 
     res.setHeader('Content-Type', 'text/csv');

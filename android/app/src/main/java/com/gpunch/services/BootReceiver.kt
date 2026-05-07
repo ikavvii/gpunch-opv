@@ -3,12 +3,11 @@ package com.gpunch.services
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import androidx.core.content.ContextCompat
 import com.gpunch.utils.SessionManager
 
 /**
  * Restarts the GeofenceMonitorService after the device reboots,
- * if the user was clocked in at the time of the reboot.
+ * if the user was punched in at the time of the reboot.
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -17,8 +16,18 @@ class BootReceiver : BroadcastReceiver() {
         val session = SessionManager(context)
         if (!session.isLoggedIn() || !session.isClockedIn()) return
 
-        // We don't have the fence config cached here; the user will need to
-        // open the app to re-establish the service. This receiver is a
-        // best-effort placeholder for offline sync future work (F09).
+        if (!session.isFenceActive() || !session.hasFence()) return
+
+        val serviceIntent = GeofenceMonitorService.startIntent(
+            context,
+            session.getFenceLat(),
+            session.getFenceLng(),
+            session.getFenceRadius()
+        )
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            context.startForegroundService(serviceIntent)
+        } else {
+            context.startService(serviceIntent)
+        }
     }
 }

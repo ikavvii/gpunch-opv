@@ -16,6 +16,7 @@ object RetrofitClient {
     fun getInstance(sessionManager: SessionManager? = null): Retrofit {
         if (retrofit == null) {
             val loggingInterceptor = HttpLoggingInterceptor().apply {
+                redactHeader("Authorization")
                 level = if (BuildConfig.DEBUG) {
                     HttpLoggingInterceptor.Level.BODY
                 } else {
@@ -38,14 +39,14 @@ object RetrofitClient {
 
             val client = OkHttpClient.Builder()
                 .addInterceptor(authInterceptor)
-                .addInterceptor(loggingInterceptor)  // after auth so JWT is visible in debug logs
+                .addInterceptor(loggingInterceptor)
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
                 .build()
 
             retrofit = Retrofit.Builder()
-                .baseUrl(BuildConfig.BASE_URL)
+                .baseUrl(normalizedBaseUrl(BuildConfig.BASE_URL))
                 .client(client)
                 .addConverterFactory(GsonConverterFactory.create())
                 .build()
@@ -59,4 +60,7 @@ object RetrofitClient {
     fun resetInstance() {
         retrofit = null
     }
+
+    private fun normalizedBaseUrl(url: String): String =
+        if (url.endsWith("/")) url else "$url/"
 }
